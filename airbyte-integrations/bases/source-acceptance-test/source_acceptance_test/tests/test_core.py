@@ -26,17 +26,17 @@ import logging
 from collections import Counter, defaultdict
 from functools import reduce
 from logging import Logger
-from typing import Any, Dict, List, Mapping, MutableMapping
+from typing import Any, Dict, List, Mapping, MutableMapping, Set
 
 import dpath.util
 import pytest
-from airbyte_cdk.models import AirbyteMessage, ConnectorSpecification, Status, Type
+from airbyte_cdk.models import AirbyteMessage, AirbyteRecordMessage, ConfiguredAirbyteCatalog, ConnectorSpecification, Status, Type
 from docker.errors import ContainerError
 from jsonschema import validate
 from source_acceptance_test.base import BaseTest
 from source_acceptance_test.config import BasicReadTestConfig, ConnectionTestConfig
 from source_acceptance_test.utils import ConnectorRunner, SecretDict, filter_output, serialize, verify_records_schema
-from source_acceptance_test.utils.json_schema_helper import JsonSchemaHelper
+from source_acceptance_test.utils.json_schema_helper import JsonSchemaHelper, get_expected_schema_structure, get_object_structure
 
 
 @pytest.mark.default_timeout(10)
@@ -146,10 +146,23 @@ def primary_keys_for_records(streams, records):
 @pytest.mark.default_timeout(5 * 60)
 class TestBasicRead(BaseTest):
     @staticmethod
-    def _validate_schema(records, configured_catalog):
+    def _validate_records_structure(records: List[AirbyteRecordMessage], configured_catalog: ConfiguredAirbyteCatalog):
+        """"""
+        schemas: Dict[str, Set] = {}
+        for stream in configured_catalog.streams:
+            schemas[stream.stream.name] = set(get_expected_schema_structure(stream.stream.json_schema))
+
+        for record in records:
+            record_fields = set(get_object_structure(record.data))
+            common_fields = set.intersection(record_fields, schemas.get(record.stream))
+            assert common_fields, f" Record {record} should have some common fields with json schema"
+
+    @staticmethod
+    def _validate_schema(records: List[AirbyteRecordMessage], configured_catalog: ConfiguredAirbyteCatalog):
         """
         Check if data type and structure in records matches the one in json_schema of the stream in catalog
         """
+        TestBasicRead._validate_records_structure(records, configured_catalog)
         bar = "-" * 80
         streams_errors = verify_records_schema(records, configured_catalog)
         for stream_name, errors in streams_errors.items():
